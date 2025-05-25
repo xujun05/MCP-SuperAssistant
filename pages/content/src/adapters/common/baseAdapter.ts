@@ -27,6 +27,7 @@ export abstract class BaseAdapter implements SiteAdapter {
   // Abstract methods for text insertion and form submission
   abstract insertTextIntoInput(text: string): void;
   abstract triggerSubmission(): void;
+  abstract getAiOutput(): Promise<string>;
 
   initialize(): void {
     logMessage(`Initializing ${this.name} adapter`);

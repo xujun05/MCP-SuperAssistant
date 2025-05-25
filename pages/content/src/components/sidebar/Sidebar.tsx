@@ -6,7 +6,7 @@ import AvailableTools from './AvailableTools/AvailableTools';
 import InstructionManager from './Instructions/InstructionManager';
 import InputArea from './InputArea/InputArea';
 import { useBackgroundCommunication } from './hooks/backgroundCommunication';
-import { logMessage, debugShadowDomStyles } from '@src/utils/helpers';
+import { logMessage, debugShadowDomStyles, saveTextToFile } from '@src/utils/helpers';
 import { Typography, Toggle, ToggleWithoutLabel, ResizeHandle, Icon, Button } from './ui';
 import { cn } from '@src/lib/utils';
 import { Card, CardContent } from '@src/components/ui/card';
@@ -375,6 +375,28 @@ const Sidebar: React.FC = () => {
     }
   };
 
+  const handleSaveOutput = async () => {
+    logMessage('[Sidebar] Attempting to save AI output...');
+    if (!adapter) {
+      logMessage('[Sidebar] Adapter not available. Cannot save output.'); // Removed 'error' severity, logMessage doesn't support it directly
+      return;
+    }
+
+    try {
+      const output = await adapter.getAiOutput();
+      if (output && output.trim().length > 0) {
+        saveTextToFile(output, 'ai_output.txt');
+        logMessage('[Sidebar] AI output saved successfully.');
+      } else {
+        logMessage('[Sidebar] No AI output retrieved or output is empty.');
+        // Consider alerting the user here if possible, e.g., using a toast notification
+      }
+    } catch (error) {
+      logMessage(`[Sidebar] Error saving AI output: ${error instanceof Error ? error.message : String(error)}`); // Removed 'error' severity
+      // Consider alerting the user
+    }
+  };
+
   const handleThemeToggle = () => {
     const currentIndex = THEME_CYCLE.indexOf(theme);
     const nextIndex = (currentIndex + 1) % THEME_CYCLE.length;
@@ -579,6 +601,16 @@ const Sidebar: React.FC = () => {
                   )}
                 </CardContent>
               </Card>
+
+              {/* Save AI Output Button */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full mt-2 dark:text-slate-300 dark:hover:bg-slate-700 dark:border-slate-600"
+                onClick={handleSaveOutput}
+              >
+                Save AI Output
+              </Button>
 
               {/* Tabs for Tools/Instructions */}
               <div className="border-b border-slate-200 dark:border-slate-700 mb-2">

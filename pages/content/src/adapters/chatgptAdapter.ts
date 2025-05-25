@@ -132,4 +132,64 @@ export class ChatGptAdapter extends BaseAdapter {
       this.sidebarManager.showWithToolOutputs();
     }
   }
+
+  async getAiOutput(): Promise<string> {
+    try {
+      // Selector for all message turns in the conversation
+      const messageElements = document.querySelectorAll('[data-testid*="conversation-turn"]');
+      if (messageElements.length === 0) {
+        logMessage('No conversation turns found for ChatGPT.');
+        return '';
+      }
+
+      // Get the last message element
+      const lastMessageElement = messageElements[messageElements.length - 1];
+
+      // Selector for the AI's message content within a turn.
+      // ChatGPT's structure has the AI response within a div with class 'markdown'
+      // and often within a structure that includes `data-message-author-role="assistant"`
+      // on one of its parent elements. We will try to find the actual content host.
+      // A common pattern for AI messages is a div that contains the rendered markdown.
+      // Let's try a selector that is more specific to AI responses.
+      // First, check if the last message is from the assistant.
+      // The actual text is within a div with class starting with "result-streaming" or similar for final messages.
+      // Or inside a div with class "markdown prose"
+      const assistantMessageSelector = '[data-message-author-role="assistant"]';
+      const potentialAiMessageContainer = lastMessageElement.querySelector(assistantMessageSelector);
+
+      if (potentialAiMessageContainer) {
+        // If we found a container marked as 'assistant', look for the message content within it.
+        // Common selectors for message content: '.markdown.prose', 'div[class*="result-streaming"]'
+        let aiMessageContent = potentialAiMessageContainer.querySelector('.markdown.prose');
+        if (aiMessageContent && aiMessageContent.textContent) {
+          return aiMessageContent.textContent.trim();
+        }
+        // Fallback for potentially different structures or streaming messages
+        aiMessageContent = potentialAiMessageContainer.querySelector('div[class*="result-streaming"]');
+        if (aiMessageContent && aiMessageContent.textContent) {
+          return aiMessageContent.textContent.trim();
+        }
+        // If specific content selectors fail, return the text content of the assistant message container
+        if (potentialAiMessageContainer.textContent) {
+          return potentialAiMessageContainer.textContent.trim();
+        }
+      } else {
+        // If the last message is not explicitly marked as 'assistant' using the above selector,
+        // it might be a user message or a system message.
+        // We could try a more general approach if the above fails, but it risks picking up user messages.
+        // For now, if it's not clearly an AI message, we return empty.
+        logMessage('Last message element does not appear to be from the AI assistant.');
+        return '';
+      }
+
+      // If no content was extracted from an assistant message
+      logMessage('Could not extract AI message content from the last message element.');
+      return '';
+
+    } catch (error) {
+      logMessage(`Error getting AI output from ChatGPT: ${error}`);
+      console.error('Error getting AI output from ChatGPT:', error);
+      return Promise.reject(new Error('Failed to get AI output from ChatGPT'));
+    }
+  }
 }

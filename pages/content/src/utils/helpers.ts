@@ -106,3 +106,36 @@ export const debugShadowDomStyles = (shadowRoot: ShadowRoot): void => {
     }
   }, 5000);
 };
+
+/**
+ * Saves text content to a file and triggers a browser download.
+ *
+ * @param content The string content to save.
+ * @param filename The desired filename for the downloaded file.
+ */
+export const saveTextToFile = (content: string, filename: string): void => {
+  try {
+    // Ensure filename has a .txt extension if not provided
+    const finalFilename = filename.endsWith('.txt') ? filename : `${filename}.txt`;
+
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', finalFilename);
+
+    // Append to body, click, and remove
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    // Clean up the object URL
+    URL.revokeObjectURL(url);
+
+    logMessage(`Successfully saved content to ${finalFilename}`);
+  } catch (error) {
+    console.error('Error saving text to file:', error);
+    logMessage(`Error saving text to file: ${error instanceof Error ? error.message : String(error)}`);
+    // Optionally, rethrow or handle as a more specific error if needed by callers
+  }
+};
