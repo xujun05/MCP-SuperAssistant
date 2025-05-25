@@ -145,3 +145,144 @@ describe('saveTextToFile', () => {
     expect(clickSpy).toHaveBeenCalled();
   });
 });
+
+describe('sanitizeFilename', () => {
+  // Import the actual sanitizeFilename for testing, logMessage will remain mocked from the setup above.
+  const { sanitizeFilename } = jest.requireActual('./helpers');
+
+  it('should return valid titles as is', () => {
+    expect(sanitizeFilename('ValidTitle123')).toBe('ValidTitle123');
+  });
+
+  it('should replace spaces with underscores', () => {
+    expect(sanitizeFilename('Title With Spaces')).toBe('Title_With_Spaces');
+  });
+
+  it('should replace multiple spaces with a single underscore', () => {
+    expect(sanitizeFilename('Title  With   Multiple   Spaces')).toBe('Title_With_Multiple_Spaces');
+  });
+
+  it('should remove invalid characters <>:"/\\|?*', () => {
+    expect(sanitizeFilename('Title<With>Invalid"Chars:/\\|?*')).toBe('Title_With_Invalid_Chars_');
+  });
+
+  it('should replace multiple consecutive invalid characters with a single underscore', () => {
+    expect(sanitizeFilename('Title<<>>With**Invalid//Chars')).toBe('Title_With_Invalid_Chars');
+  });
+  
+  it('should handle mixed spaces and invalid characters', () => {
+    expect(sanitizeFilename('Title <With> Invalid Chars?*')).toBe('Title_With_Invalid_Chars_');
+  });
+
+  it('should return "Untitled" for an empty title', () => {
+    expect(sanitizeFilename('')).toBe('Untitled');
+  });
+
+  it('should return "Untitled" for a title consisting only of invalid characters or spaces', () => {
+    expect(sanitizeFilename('   ')).toBe('Untitled');
+    expect(sanitizeFilename('<>/?*')).toBe('Untitled');
+    expect(sanitizeFilename('  <>?*  ')).toBe('Untitled');
+  });
+
+  it('should truncate very long titles to 100 characters', () => {
+    const longTitle = 'a'.repeat(150);
+    expect(sanitizeFilename(longTitle).length).toBe(100);
+    expect(sanitizeFilename(longTitle)).toBe('a'.repeat(100));
+  });
+
+  it('should truncate long titles with spaces and invalid chars correctly', () => {
+    const longTitle = 'This is a very long title with spaces and invalid characters like < > " : / \\ | ? * that should be sanitized and truncated'.repeat(3);
+    const sanitized = sanitizeFilename(longTitle);
+    expect(sanitized.length).toBe(100);
+    // Check that the beginning is what we expect after sanitization
+    expect(sanitized.startsWith('This_is_a_very_long_title_with_spaces_and_invalid_characters_like_')).toBe(true);
+  });
+
+  it('should not end with an underscore if the original title does not warrant it after truncation', () => {
+    const title = 'a'.repeat(99) + 'b'; // Length 100
+    expect(sanitizeFilename(title)).toBe(title);
+    const title2 = 'a'.repeat(100) + 'b'; // Length 101, 'b' is truncated
+    expect(sanitizeFilename(title2)).toBe('a'.repeat(100));
+  });
+  
+  it('should handle titles that become empty after removing invalid characters before truncation', () => {
+    expect(sanitizeFilename('<>:"/\\|?*'.repeat(20))).toBe('Untitled');
+  });
+});
+
+describe('generateUniqueFilename (simulation for Sidebar logic)', () => {
+  const { sanitizeFilename } = jest.requireActual('./helpers');
+
+  // This simulates the core filename generation logic from Sidebar.tsx's handleNewAiOutputForAutoSave
+  const generateTestFilename = (title: string, counters: Record<string, number>): { filename: string, newCounters: Record<string, number> } => {
+    const baseFilename = sanitizeFilename(title);
+    const currentCounter = counters[baseFilename] || 1;
+    const filename = `${baseFilename}_${currentCounter}.txt`;
+    
+    const newCounters = {
+      ...counters,
+      [baseFilename]: currentCounter + 1,
+    };
+    return { filename, newCounters };
+  };
+
+  it('should generate unique filenames with incrementing counters for the same title', () => {
+    let counters: Record<string, number> = {};
+    const title = "My Test Page";
+
+    // First call
+    let result = generateTestFilename(title, counters);
+    expect(result.filename).toBe("My_Test_Page_1.txt");
+    counters = result.newCounters;
+
+    // Second call
+    result = generateTestFilename(title, counters);
+    expect(result.filename).toBe("My_Test_Page_2.txt");
+    counters = result.newCounters;
+
+    // Third call
+    result = generateTestFilename(title, counters);
+    expect(result.filename).toBe("My_Test_Page_3.txt");
+    counters = result.newCounters;
+  });
+
+  it('should handle different titles independently', () => {
+    let counters: Record<string, number> = {};
+    const title1 = "First Page";
+    const title2 = "Second Page";
+
+    // First call for title1
+    let result1 = generateTestFilename(title1, counters);
+    expect(result1.filename).toBe("First_Page_1.txt");
+    counters = result1.newCounters;
+
+    // First call for title2
+    let result2 = generateTestFilename(title2, counters);
+    expect(result2.filename).toBe("Second_Page_1.txt");
+    counters = result2.newCounters;
+    
+    // Second call for title1
+    result1 = generateTestFilename(title1, counters);
+    expect(result1.filename).toBe("First_Page_2.txt");
+    counters = result1.newCounters;
+
+    // Check counters state
+    expect(counters["First_Page"]).toBe(3);
+    expect(counters["Second_Page"]).toBe(2);
+  });
+
+  it('should use "Untitled" as base if sanitized title is empty, and increment', () => {
+    let counters: Record<string, number> = {};
+    const title = "???"; // Will be sanitized to "Untitled"
+
+    // First call
+    let result = generateTestFilename(title, counters);
+    expect(result.filename).toBe("Untitled_1.txt");
+    counters = result.newCounters;
+
+    // Second call
+    result = generateTestFilename(title, counters);
+    expect(result.filename).toBe("Untitled_2.txt");
+    counters = result.newCounters;
+  });
+});

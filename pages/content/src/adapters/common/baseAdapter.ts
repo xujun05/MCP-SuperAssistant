@@ -8,11 +8,15 @@
 import type { SiteAdapter } from '../../utils/siteAdapter';
 import { logMessage } from '../../utils/helpers';
 
+// Define the callback type for new AI output
+export type AiOutputCallback = (output: string) => void;
+
 export abstract class BaseAdapter implements SiteAdapter {
   abstract name: string;
   abstract hostname: string | string[];
   urlPatterns?: RegExp[];
   protected sidebarManager: any = null;
+  protected newOutputListener: AiOutputCallback | null = null; // Property to store the callback
   // protected toolDetector: SimpleToolDetector = createToolDetector();
 
   // Abstract methods that must be implemented by site-specific adapters
@@ -45,8 +49,18 @@ export abstract class BaseAdapter implements SiteAdapter {
     this.initializeObserver(true);
   }
 
+  /**
+   * Sets or clears the listener for new AI output.
+   * @param listener The callback function to invoke with new AI output, or null to clear.
+   */
+  public setNewOutputListener(listener: AiOutputCallback | null): void {
+    this.newOutputListener = listener;
+    logMessage(`${this.name} adapter: New output listener ${listener ? 'set' : 'cleared'}.`);
+  }
+
   cleanup(): void {
     logMessage(`Cleaning up ${this.name} adapter`);
+    this.setNewOutputListener(null); // Clear the listener
 
     if (this.sidebarManager) {
       this.sidebarManager.destroy();

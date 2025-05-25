@@ -7,6 +7,7 @@ export interface SidebarPreferences {
   isMinimized: boolean;
   autoSubmit: boolean;
   theme: 'light' | 'dark' | 'system';
+  autoSaveEnabled?: boolean; // Added new preference
 }
 
 // Tool Permissions
@@ -28,6 +29,7 @@ const DEFAULT_PREFERENCES: SidebarPreferences = {
   isMinimized: false,
   autoSubmit: false,
   theme: 'system',
+  autoSaveEnabled: false, // Default value for new preference
 };
 
 /**
@@ -49,10 +51,16 @@ export const getSidebarPreferences = async (): Promise<SidebarPreferences> => {
     }
 
     logMessage('[Storage] Retrieved sidebar preferences from storage');
-    return {
+    // Ensure all default values are present if not in stored preferences
+    const completePreferences: SidebarPreferences = {
       ...DEFAULT_PREFERENCES,
-      ...(preferences || {}),
+      ...(preferences || {}), // Spread potentially partial stored preferences
+      // Explicitly ensure autoSaveEnabled has a default if missing from 'preferences'
+      // but already handled by DEFAULT_PREFERENCES merge.
+      // This is more for clarity or if DEFAULT_PREFERENCES was not comprehensive.
+      autoSaveEnabled: preferences?.autoSaveEnabled ?? DEFAULT_PREFERENCES.autoSaveEnabled,
     };
+    return completePreferences;
   } catch (error) {
     logMessage(
       `[Storage] Error retrieving sidebar preferences: ${error instanceof Error ? error.message : String(error)}`,
@@ -73,9 +81,12 @@ export const saveSidebarPreferences = async (preferences: Partial<SidebarPrefere
 
     // Get current preferences first to merge with new ones
     const currentPrefs = await getSidebarPreferences();
-    const updatedPrefs = {
+    const updatedPrefs: SidebarPreferences = {
       ...currentPrefs,
-      ...preferences,
+      ...preferences, // New partial preferences override current ones
+      // Ensure autoSaveEnabled is explicitly handled if it's part of 'preferences'
+      // or maintains its value from 'currentPrefs'
+      autoSaveEnabled: preferences.autoSaveEnabled !== undefined ? preferences.autoSaveEnabled : currentPrefs.autoSaveEnabled,
     };
 
     await chrome.storage.local.set({ [STORAGE_KEY]: updatedPrefs });

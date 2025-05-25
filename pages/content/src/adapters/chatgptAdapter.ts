@@ -7,6 +7,20 @@
 import { BaseAdapter } from './common';
 import { logMessage } from '../utils/helpers';
 import { insertToolResultToChatInput, attachFileToChatInput, submitChatInput } from '../components/websites/chatgpt';
+
+// Debounce utility function
+function debounce<F extends (...args: any[]) => void>(func: F, waitFor: number) {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  return (...args: Parameters<F>): void => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    timeoutId = setTimeout(() => {
+      timeoutId = null;
+      func(...args);
+    }, waitFor);
+  };
+}
 import { SidebarManager } from '../components/sidebar';
 import { initChatGPTComponents } from './adaptercomponents';
 export class ChatGptAdapter extends BaseAdapter {
@@ -16,12 +30,17 @@ export class ChatGptAdapter extends BaseAdapter {
   // Properties to track navigation
   private lastUrl: string = '';
   private urlCheckInterval: number | null = null;
+  private messageObserver: MutationObserver | null = null; // For observing new AI messages
+  private debouncedProcessAiMessage: ((messageElement: HTMLElement) => void) | null = null;
+  private lastProcessedMessageContent: string | null = null; // For deduplication
 
   constructor() {
     super();
     // Create the sidebar manager instance
     this.sidebarManager = SidebarManager.getInstance('chatgpt');
     logMessage('Created ChatGPT sidebar manager instance');
+    // Initialize the debounced function
+    this.debouncedProcessAiMessage = debounce(this.processAndRelayAiMessage.bind(this), 750); // 750ms debounce delay
     // initChatGPTComponents();
   }
 
@@ -42,12 +61,122 @@ export class ChatGptAdapter extends BaseAdapter {
         if (currentUrl !== this.lastUrl) {
           logMessage(`URL changed from ${this.lastUrl} to ${currentUrl}`);
           this.lastUrl = currentUrl;
+          this.lastProcessedMessageContent = null; // Reset deduplication cache on URL change
 
           initChatGPTComponents();
           // Check if we should show or hide the sidebar based on URL
           this.checkCurrentUrl();
         }
       }, 1000); // Check every second
+    }
+
+    // Initialize MutationObserver for new messages
+    if (!this.messageObserver) {
+      const conversationTurnsContainer = document.querySelector('main > div > div > div > div[class*="react-scroll-to-bottom"] > div > div');
+      const targetNode = conversationTurnsContainer || document.querySelector('main');
+
+      if (targetNode) {
+        this.messageObserver = new MutationObserver(this.handleMutations.bind(this));
+        this.messageObserver.observe(targetNode, {
+          childList: true,
+          subtree: true,
+          characterData: true, // Observe text changes for streaming
+          attributes: true, // Observe attribute changes (e.g. data-message-id)
+          attributeFilter: ['data-message-id', 'class'], // Be specific if possible
+        });
+        logMessage('ChatGPT Adapter: MutationObserver initialized for new messages (childList, characterData, attributes).');
+      } else {
+        logMessage('ChatGPT Adapter: Could not find target node for MutationObserver. New message detection might not work.', 'error');
+      }
+    }
+  }
+
+  private processAndRelayAiMessage(messageElement: HTMLElement): void {
+    if (!messageElement) return;
+
+    const assistantMessageContainer = messageElement.querySelector('[data-message-author-role="assistant"]');
+    if (!assistantMessageContainer) return;
+
+    let currentMessageText = '';
+    // Prioritize more specific selectors first
+    const markdownProseElement = assistantMessageContainer.querySelector('.markdown.prose');
+    if (markdownProseElement && markdownProseElement.textContent) {
+      currentMessageText = markdownProseElement.textContent.trim();
+    } else {
+      const streamingContentElement = assistantMessageContainer.querySelector('div[class*="result-streaming"]');
+      if (streamingContentElement && streamingContentElement.textContent) {
+        currentMessageText = streamingContentElement.textContent.trim();
+      } else if (assistantMessageContainer.textContent) {
+        // Fallback to the entire assistant container's text content
+        // This might sometimes include "ChatGPT" or other UI elements if not careful with structure
+        currentMessageText = assistantMessageContainer.textContent.trim();
+      }
+    }
+    
+    // Further refinement: Sometimes the .markdown.prose is empty, but a sibling or child contains the actual text.
+    // This check is a bit more aggressive if the primary selectors fail.
+    if (!currentMessageText && assistantMessageContainer.children.length > 0) {
+        // Attempt to get text from direct children, often in a div.
+        // This can be risky if the structure is not as expected.
+        for (const child of Array.from(assistantMessageContainer.children)) {
+            if (child.textContent && child.textContent.trim().length > 0 && child.tagName.toLowerCase() === 'div') {
+                 // Check if this child is not another message container or a button bar etc.
+                if (!child.querySelector('[data-message-author-role]') && !child.querySelector('button')) {
+                    currentMessageText = child.textContent.trim();
+                    break; 
+                }
+            }
+        }
+    }
+
+
+    if (currentMessageText && currentMessageText !== this.lastProcessedMessageContent) {
+      if (this.newOutputListener) {
+        logMessage('ChatGPT Adapter: Relaying message (debounced). Content: ' + currentMessageText.substring(0, 50) + '...');
+        this.newOutputListener(currentMessageText);
+        this.lastProcessedMessageContent = currentMessageText;
+      }
+    } else if (currentMessageText && currentMessageText === this.lastProcessedMessageContent) {
+      // logMessage('ChatGPT Adapter: Message content identical to last processed, not relaying.');
+    }
+  }
+
+  private handleMutations(mutationsList: MutationRecord[], observer: MutationObserver): void {
+    for (const mutation of mutationsList) {
+      let targetElement: HTMLElement | null = null;
+
+      if (mutation.type === 'childList') {
+        mutation.addedNodes.forEach(node => {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            const element = node as HTMLElement;
+            // Check if the added node itself is a turn or contains one
+            if (element.matches('[data-testid*="conversation-turn"]')) {
+              targetElement = element;
+            } else {
+              targetElement = element.querySelector('[data-testid*="conversation-turn"]');
+            }
+            if (targetElement && targetElement.querySelector('[data-message-author-role="assistant"]') && this.debouncedProcessAiMessage) {
+              this.debouncedProcessAiMessage(targetElement);
+            }
+          }
+        });
+      } else if (mutation.type === 'characterData') {
+        // Target for characterData is a Text node, get its parent.
+        const parent = mutation.target.parentElement;
+        if (parent) {
+          targetElement = parent.closest('[data-testid*="conversation-turn"]');
+        }
+        if (targetElement && targetElement.querySelector('[data-message-author-role="assistant"]') && this.debouncedProcessAiMessage) {
+          this.debouncedProcessAiMessage(targetElement);
+        }
+      } else if (mutation.type === 'attributes') {
+        if (mutation.target.nodeType === Node.ELEMENT_NODE) {
+          targetElement = (mutation.target as HTMLElement).closest('[data-testid*="conversation-turn"]');
+        }
+        if (targetElement && targetElement.querySelector('[data-message-author-role="assistant"]') && this.debouncedProcessAiMessage) {
+          this.debouncedProcessAiMessage(targetElement);
+        }
+      }
     }
   }
 
@@ -56,6 +185,13 @@ export class ChatGptAdapter extends BaseAdapter {
     if (this.urlCheckInterval) {
       window.clearInterval(this.urlCheckInterval);
       this.urlCheckInterval = null;
+    }
+
+    // Disconnect MutationObserver
+    if (this.messageObserver) {
+      this.messageObserver.disconnect();
+      this.messageObserver = null;
+      logMessage('ChatGPT Adapter: MutationObserver disconnected.');
     }
 
     // Call the parent cleanup method

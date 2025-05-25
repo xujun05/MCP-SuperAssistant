@@ -6,7 +6,7 @@ import AvailableTools from './AvailableTools/AvailableTools';
 import InstructionManager from './Instructions/InstructionManager';
 import InputArea from './InputArea/InputArea';
 import { useBackgroundCommunication } from './hooks/backgroundCommunication';
-import { logMessage, debugShadowDomStyles, saveTextToFile } from '@src/utils/helpers';
+import { logMessage, debugShadowDomStyles, saveTextToFile, sanitizeFilename } from '@src/utils/helpers'; // Added sanitizeFilename
 import { Typography, Toggle, ToggleWithoutLabel, ResizeHandle, Icon, Button } from './ui';
 import { cn } from '@src/lib/utils';
 import { Card, CardContent } from '@src/components/ui/card';
@@ -57,10 +57,12 @@ const Sidebar: React.FC = () => {
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
   const [isPushMode, setIsPushMode] = useState(false);
   const [autoSubmit, setAutoSubmit] = useState(false);
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(false); // New state for auto-save
   const [theme, setTheme] = useState<Theme>('system');
   const [isTransitioning, setIsTransitioning] = useState(false); // Single state for all transitions
   const [isInitialRender, setIsInitialRender] = useState(true);
   const [isInputMinimized, setIsInputMinimized] = useState(false);
+  const [filenameCounters, setFilenameCounters] = useState<Record<string, number>>({}); // For auto-save filename uniqueness
   // Add a state to track if component loading is complete, regardless of background services
   const [isComponentLoadingComplete, setIsComponentLoadingComplete] = useState(false);
 
@@ -120,6 +122,7 @@ const Sidebar: React.FC = () => {
         setIsMinimized(preferences.isMinimized ?? false);
         setAutoSubmit(preferences.autoSubmit || false);
         setTheme(preferences.theme || 'system');
+         setAutoSaveEnabled(preferences.autoSaveEnabled ?? false); // Load auto-save preference
         previousWidthRef.current = preferences.sidebarWidth || SIDEBAR_DEFAULT_WIDTH;
       } catch (error) {
         logMessage(`[Sidebar] Error loading preferences: ${error instanceof Error ? error.message : String(error)}`);
@@ -161,13 +164,64 @@ const Sidebar: React.FC = () => {
         isMinimized,
         autoSubmit,
         theme,
++        autoSaveEnabled, // Save auto-save preference
       }).catch(error => {
         logMessage(`[Sidebar] Error saving preferences: ${error instanceof Error ? error.message : String(error)}`);
       });
     }, 300);
 
     return () => clearTimeout(saveTimeout);
-  }, [isPushMode, sidebarWidth, isMinimized, autoSubmit, theme]);
+  }, [isPushMode, sidebarWidth, isMinimized, autoSubmit, theme, autoSaveEnabled]); // Add autoSaveEnabled to dependency array
+
+  // --- Auto-save AI Output Logic ---
+  // sanitizeFilename is now imported from helpers.ts
+
+  const handleNewAiOutputForAutoSave = useCallback((output: string) => {
+    // This check is important because the listener might be called before the state updates propagate from the effect
+    if (!autoSaveEnabled) {
+      logMessage('[Sidebar] Auto-save called, but autoSaveEnabled is false. Skipping.');
+      return;
+    }
+
+    logMessage('[Sidebar] Auto-saving new AI output...');
+    const pageTitle = document.title;
+    const baseFilename = sanitizeFilename(pageTitle);
+    
+    setFilenameCounters(prevCounters => {
+      const currentCounter = prevCounters[baseFilename] || 1;
+      const filename = `${baseFilename}_${currentCounter}.txt`;
+      
+      saveTextToFile(output, filename);
+      logMessage(`[Sidebar] AI output automatically saved to ${filename}`);
+      
+      return {
+        ...prevCounters,
+        [baseFilename]: currentCounter + 1,
+      };
+    });
+  }, [autoSaveEnabled, filenameCounters]); // filenameCounters is managed by setFilenameCounters, so including it here helps if its structure was complex.
+                                          // sanitizeFilename is stable if defined outside or memoized.
+
+  useEffect(() => {
+    if (adapter) {
+      if (autoSaveEnabled) {
+        adapter.setNewOutputListener(handleNewAiOutputForAutoSave);
+        logMessage('[Sidebar] Auto-save listener registered with adapter.');
+      } else {
+        // Clear listener if autoSave is disabled
+        adapter.setNewOutputListener(null);
+        logMessage('[Sidebar] Auto-save listener cleared from adapter (autoSaveEnabled is false).');
+      }
+    }
+    // Cleanup function for when component unmounts or dependencies change
+    return () => {
+      if (adapter) {
+        adapter.setNewOutputListener(null);
+        logMessage('[Sidebar] Auto-save listener cleared on cleanup (unmount or adapter/autoSaveEnabled change).');
+      }
+    };
+  }, [adapter, autoSaveEnabled, handleNewAiOutputForAutoSave]);
+  // --- End Auto-save AI Output Logic ---
 
   // useEffect(() => {
   //   // Function to update detected tools
@@ -340,6 +394,11 @@ const Sidebar: React.FC = () => {
   const handleAutoSubmitToggle = (checked: boolean) => {
     setAutoSubmit(checked);
     logMessage(`[Sidebar] Auto submit ${checked ? 'enabled' : 'disabled'}`);
+  };
+
+  const handleAutoSaveToggle = (checked: boolean) => {
+    setAutoSaveEnabled(checked);
+    logMessage(`[Sidebar] Auto-save AI outputs ${checked ? 'enabled' : 'disabled'}`);
   };
 
   const handleClearTools = () => {
@@ -568,6 +627,16 @@ const Sidebar: React.FC = () => {
                       label="Push Content Mode"
                       checked={isPushMode}
                       onChange={handlePushModeToggle}
+                     />
+                   </div>
+                   <div className="flex items-center justify-between">
+                     <Typography variant="subtitle" className="text-slate-700 dark:text-slate-300 font-medium">
+                       Automatically Save AI Outputs
+                     </Typography>
+                     <ToggleWithoutLabel
+                       label="Automatically Save AI Outputs"
+                       checked={autoSaveEnabled}
+                       onChange={handleAutoSaveToggle}
                     />
                   </div>
                   {/* <div className="flex items-center justify-between">
